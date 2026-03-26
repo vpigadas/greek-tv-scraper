@@ -16,6 +16,10 @@ services:
       - "8082:8082"
     depends_on:
       - redis
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=8082"
+      - "prometheus.path=/metrics"
     logging:
       driver: json-file
       options:

@@ -11,9 +11,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/vpigadas/greek-tv-scraper/internal/api"
 	"github.com/vpigadas/greek-tv-scraper/internal/config"
+	_ "github.com/vpigadas/greek-tv-scraper/internal/metrics" // register metrics
 	"github.com/vpigadas/greek-tv-scraper/internal/scheduler"
 	"github.com/vpigadas/greek-tv-scraper/internal/store"
 )
@@ -39,11 +41,15 @@ func main() {
 	defer sched.Stop()
 
 	r := chi.NewRouter()
+	r.Use(api.Metrics)
 	r.Use(api.Logger)
 	r.Use(api.CORS)
 
 	handler := api.NewHandler(redisStore, cfg)
 	handler.RegisterRoutes(r)
+
+	// Prometheus metrics endpoint
+	r.Handle("/metrics", promhttp.Handler())
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

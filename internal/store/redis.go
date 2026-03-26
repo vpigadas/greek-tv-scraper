@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/vpigadas/greek-tv-scraper/internal/metrics"
 	"github.com/vpigadas/greek-tv-scraper/internal/model"
 )
 
@@ -37,18 +38,27 @@ func (s *Store) SetSchedule(ctx context.Context, channelID, date string, progs [
 	if err != nil {
 		return err
 	}
-	return s.client.Set(ctx, key, data, s.ttl).Err()
+	err = s.client.Set(ctx, key, data, s.ttl).Err()
+	if err != nil {
+		metrics.RedisOperations.WithLabelValues("set", "error").Inc()
+	} else {
+		metrics.RedisOperations.WithLabelValues("set", "success").Inc()
+	}
+	return err
 }
 
 func (s *Store) GetSchedule(ctx context.Context, channelID, date string) ([]model.Programme, error) {
 	key := fmt.Sprintf("%sschedule:%s:%s", keyPrefix, channelID, date)
 	data, err := s.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
+		metrics.RedisOperations.WithLabelValues("get", "success").Inc()
 		return nil, nil
 	}
 	if err != nil {
+		metrics.RedisOperations.WithLabelValues("get", "error").Inc()
 		return nil, err
 	}
+	metrics.RedisOperations.WithLabelValues("get", "success").Inc()
 	var progs []model.Programme
 	return progs, json.Unmarshal(data, &progs)
 }
