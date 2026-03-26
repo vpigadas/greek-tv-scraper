@@ -1,36 +1,26 @@
-version: "3.9"
 services:
-  greek-tv-scraper:
-    build:
-      context: ./
-      dockerfile: Dockerfile
-    container_name: greek-tv-scraper
-    restart: unless-stopped
-    ports:
-      - "8082:8082"
-    environment:
-      - PORT=8082
-      - REDIS_ADDR=redis:6379
-      - REDIS_DB=1
-      - SCHEDULE_TTL=6h
-      - REFRESH_CRON=0 */4 * * *
-    depends_on:
-      - redis
-    networks:
-      - scraper-net
-
   redis:
     image: redis:7-alpine
-    container_name: greek-tv-redis
     restart: unless-stopped
     volumes:
       - redis-data:/data
-    networks:
-      - scraper-net
 
-networks:
-  scraper-net:
-    driver: bridge
+  greek-tv-scraper:
+    image: ghcr.io/vpigadas/greek-tv-scraper:latest
+    env_file:
+      - configs/scraper.env
+    environment:
+      - REDIS_ADDR=redis:6379
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    depends_on:
+      - redis
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   redis-data:

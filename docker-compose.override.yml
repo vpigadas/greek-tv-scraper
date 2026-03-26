@@ -1,0 +1,6 @@
+# Local dev overrides — build from source instead of pulling from GHCR
+services:
+  greek-tv-scraper:
+    build:
+      context: .
+      target: server
