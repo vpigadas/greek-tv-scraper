@@ -1,0 +1,15 @@
+# Compiled binary
+server
+greek-tv-scraper
+*.exe
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
