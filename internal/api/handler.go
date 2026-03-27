@@ -29,6 +29,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/api/channels", h.listChannels)
 	r.Get("/api/channels/{id}", h.getChannel)
 	r.Get("/api/schedule/{id}", h.getSchedule)
+	r.Get("/api/schedule/{id}/week", h.getScheduleWeek)
 	r.Get("/api/schedule/{id}/{date}", h.getScheduleByDate)
 	r.Get("/api/now", h.getNowPlaying)
 	r.Get("/api/now/{id}", h.getNowPlayingForChannel)
@@ -57,11 +58,13 @@ func (h *Handler) getChannel(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, ch)
 }
 
+// GET /api/schedule/{id}?date=2026-03-26
+// Defaults to current broadcast day (06:00→06:00).
 func (h *Handler) getSchedule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	date := r.URL.Query().Get("date")
 	if date == "" {
-		date = time.Now().In(h.athens).Format("2006-01-02")
+		date = store.BroadcastDate(time.Now(), h.athens)
 	}
 	h.serveSchedule(w, r, id, date)
 }
@@ -70,6 +73,48 @@ func (h *Handler) getScheduleByDate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	date := chi.URLParam(r, "date")
 	h.serveSchedule(w, r, id, date)
+}
+
+// GET /api/schedule/{id}/week
+// Returns 7 days of schedule (today's broadcast day + 6 days ahead) in a single response.
+func (h *Handler) getScheduleWeek(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	ch := registry.ChannelByID(id)
+	if ch == nil {
+		respond(w, http.StatusNotFound, map[string]string{"error": "channel not found"})
+		return
+	}
+
+	todayBD := store.BroadcastDate(time.Now(), h.athens)
+	todayDate, _ := time.ParseInLocation("2006-01-02", todayBD, h.athens)
+
+	dates := make([]string, 7)
+	for i := range dates {
+		dates[i] = todayDate.AddDate(0, 0, i).Format("2006-01-02")
+	}
+
+	// Single Redis pipeline round-trip for all 7 days
+	schedules, err := h.store.GetScheduleRange(r.Context(), id, dates)
+	if err != nil {
+		respond(w, http.StatusInternalServerError, map[string]string{"error": "store error"})
+		return
+	}
+
+	// Sort programmes within each day and enrich is_live
+	for date, progs := range schedules {
+		sort.Slice(progs, func(i, j int) bool {
+			return progs[i].StartTime.Before(progs[j].StartTime)
+		})
+		enrichLive(progs)
+		schedules[date] = progs
+	}
+
+	respond(w, http.StatusOK, map[string]any{
+		"channel": ch,
+		"from":    dates[0],
+		"to":      dates[6],
+		"days":    schedules,
+	})
 }
 
 func (h *Handler) serveSchedule(w http.ResponseWriter, r *http.Request, channelID, date string) {
@@ -103,40 +148,24 @@ func (h *Handler) serveSchedule(w http.ResponseWriter, r *http.Request, channelI
 	})
 }
 
+// GET /api/now — reads pre-computed cache (single Redis GET).
 func (h *Handler) getNowPlaying(w http.ResponseWriter, r *http.Request) {
-	now := time.Now().UTC()
-	date := now.In(h.athens).Format("2006-01-02")
-
-	var results []model.NowPlaying
-	for _, ch := range registry.Channels {
-		progs, err := h.store.GetSchedule(r.Context(), ch.ID, date)
-		if err != nil || len(progs) == 0 {
-			continue
-		}
-		for _, p := range progs {
-			if now.After(p.StartTime) && now.Before(p.EndTime) {
-				progress := 0
-				total := int(p.EndTime.Sub(p.StartTime).Seconds())
-				if total > 0 {
-					elapsed := int(now.Sub(p.StartTime).Seconds())
-					progress = (elapsed * 100) / total
-				}
-				results = append(results, model.NowPlaying{
-					Channel:   ch,
-					Programme: p,
-					Progress:  progress,
-				})
-				break
-			}
-		}
+	results, err := h.store.GetNowPlaying(r.Context())
+	if err != nil {
+		respond(w, http.StatusInternalServerError, map[string]string{"error": "store error"})
+		return
+	}
+	if results == nil {
+		results = []model.NowPlaying{}
 	}
 	respond(w, http.StatusOK, map[string]any{
 		"count":   len(results),
-		"now":     now.Format(time.RFC3339),
+		"now":     time.Now().UTC().Format(time.RFC3339),
 		"playing": results,
 	})
 }
 
+// GET /api/now/{id} — reads pre-computed cache and filters by channel.
 func (h *Handler) getNowPlayingForChannel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	ch := registry.ChannelByID(id)
@@ -145,27 +174,15 @@ func (h *Handler) getNowPlayingForChannel(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	now := time.Now().UTC()
-	date := now.In(h.athens).Format("2006-01-02")
-	progs, err := h.store.GetSchedule(r.Context(), id, date)
+	results, err := h.store.GetNowPlaying(r.Context())
 	if err != nil {
 		respond(w, http.StatusInternalServerError, map[string]string{"error": "store error"})
 		return
 	}
 
-	for _, p := range progs {
-		if now.After(p.StartTime) && now.Before(p.EndTime) {
-			progress := 0
-			total := int(p.EndTime.Sub(p.StartTime).Seconds())
-			if total > 0 {
-				elapsed := int(now.Sub(p.StartTime).Seconds())
-				progress = (elapsed * 100) / total
-			}
-			respond(w, http.StatusOK, model.NowPlaying{
-				Channel:   *ch,
-				Programme: p,
-				Progress:  progress,
-			})
+	for _, np := range results {
+		if np.Channel.ID == id {
+			respond(w, http.StatusOK, np)
 			return
 		}
 	}

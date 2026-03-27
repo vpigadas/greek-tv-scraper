@@ -15,7 +15,7 @@ import (
 
 	"github.com/vpigadas/greek-tv-scraper/internal/api"
 	"github.com/vpigadas/greek-tv-scraper/internal/config"
-	_ "github.com/vpigadas/greek-tv-scraper/internal/metrics" // register metrics
+	_ "github.com/vpigadas/greek-tv-scraper/internal/metrics"
 	"github.com/vpigadas/greek-tv-scraper/internal/scheduler"
 	"github.com/vpigadas/greek-tv-scraper/internal/store"
 )
@@ -28,7 +28,7 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	redisStore := store.New(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.ScheduleTTL)
+	redisStore := store.New(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.FutureScheduleTTL, cfg.PastScheduleTTL)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := redisStore.Ping(ctx); err != nil {
@@ -36,9 +36,15 @@ func main() {
 	}
 	log.Printf("redis: connected to %s db=%d", cfg.RedisAddr, cfg.RedisDB)
 
+	// Start scheduler (cron refresh for 14-day window)
 	sched := scheduler.New(cfg, redisStore)
 	sched.Start()
 	defer sched.Stop()
+
+	// Start now-updater (60s ticker for pre-computed /now cache)
+	nowUpdater := scheduler.NewNowUpdater(redisStore, cfg.AthensLocation)
+	nowUpdater.Start()
+	defer nowUpdater.Stop()
 
 	r := chi.NewRouter()
 	r.Use(api.Metrics)
@@ -48,7 +54,6 @@ func main() {
 	handler := api.NewHandler(redisStore, cfg)
 	handler.RegisterRoutes(r)
 
-	// Prometheus metrics endpoint
 	r.Handle("/metrics", promhttp.Handler())
 
 	srv := &http.Server{

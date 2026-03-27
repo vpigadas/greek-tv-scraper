@@ -15,30 +15,37 @@ import (
 const keyPrefix = "greek-tv:"
 
 type Store struct {
-	client *redis.Client
-	ttl    time.Duration
+	client    *redis.Client
+	futureTTL time.Duration
+	pastTTL   time.Duration
 }
 
-func New(addr, password string, db int, ttl time.Duration) *Store {
+func New(addr, password string, db int, futureTTL, pastTTL time.Duration) *Store {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
 		DB:       db,
 	})
-	return &Store{client: rdb, ttl: ttl}
+	return &Store{client: rdb, futureTTL: futureTTL, pastTTL: pastTTL}
 }
 
 func (s *Store) Ping(ctx context.Context) error {
 	return s.client.Ping(ctx).Err()
 }
 
-func (s *Store) SetSchedule(ctx context.Context, channelID, date string, progs []model.Programme) error {
+// SetSchedule stores programmes for a channel+broadcastDate with the appropriate TTL.
+// isPast controls which TTL is used: true = 8 days (historical), false = 8h (fresh).
+func (s *Store) SetSchedule(ctx context.Context, channelID, date string, progs []model.Programme, isPast bool) error {
 	key := fmt.Sprintf("%sschedule:%s:%s", keyPrefix, channelID, date)
 	data, err := json.Marshal(progs)
 	if err != nil {
 		return err
 	}
-	err = s.client.Set(ctx, key, data, s.ttl).Err()
+	ttl := s.futureTTL
+	if isPast {
+		ttl = s.pastTTL
+	}
+	err = s.client.Set(ctx, key, data, ttl).Err()
 	if err != nil {
 		metrics.RedisOperations.WithLabelValues("set", "error").Inc()
 	} else {
@@ -47,6 +54,7 @@ func (s *Store) SetSchedule(ctx context.Context, channelID, date string, progs [
 	return err
 }
 
+// GetSchedule retrieves the programme list for a channel+broadcastDate.
 func (s *Store) GetSchedule(ctx context.Context, channelID, date string) ([]model.Programme, error) {
 	key := fmt.Sprintf("%sschedule:%s:%s", keyPrefix, channelID, date)
 	data, err := s.client.Get(ctx, key).Bytes()
@@ -63,6 +71,57 @@ func (s *Store) GetSchedule(ctx context.Context, channelID, date string) ([]mode
 	return progs, json.Unmarshal(data, &progs)
 }
 
+// GetScheduleRange fetches multiple days for a channel in a single Redis pipeline round-trip.
+func (s *Store) GetScheduleRange(ctx context.Context, channelID string, dates []string) (map[string][]model.Programme, error) {
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.StringCmd, len(dates))
+	for _, date := range dates {
+		key := fmt.Sprintf("%sschedule:%s:%s", keyPrefix, channelID, date)
+		cmds[date] = pipe.Get(ctx, key)
+	}
+	_, err := pipe.Exec(ctx)
+	if err != nil && err != redis.Nil {
+		metrics.RedisOperations.WithLabelValues("pipeline", "error").Inc()
+		return nil, err
+	}
+	metrics.RedisOperations.WithLabelValues("pipeline", "success").Inc()
+
+	result := make(map[string][]model.Programme, len(dates))
+	for date, cmd := range cmds {
+		data, err := cmd.Bytes()
+		if err != nil {
+			continue // key doesn't exist for this date
+		}
+		var progs []model.Programme
+		if err := json.Unmarshal(data, &progs); err == nil {
+			result[date] = progs
+		}
+	}
+	return result, nil
+}
+
+// SetNowPlaying stores the pre-computed now-playing data with a short TTL.
+func (s *Store) SetNowPlaying(ctx context.Context, playing []model.NowPlaying) error {
+	data, err := json.Marshal(playing)
+	if err != nil {
+		return err
+	}
+	return s.client.Set(ctx, keyPrefix+"now", data, 90*time.Second).Err()
+}
+
+// GetNowPlaying retrieves the pre-computed now-playing data.
+func (s *Store) GetNowPlaying(ctx context.Context) ([]model.NowPlaying, error) {
+	data, err := s.client.Get(ctx, keyPrefix+"now").Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var playing []model.NowPlaying
+	return playing, json.Unmarshal(data, &playing)
+}
+
 func (s *Store) SetLastRefresh(ctx context.Context) error {
 	key := keyPrefix + "last-refresh"
 	return s.client.Set(ctx, key, time.Now().UTC().Format(time.RFC3339), 0).Err()
@@ -77,7 +136,13 @@ func (s *Store) GetLastRefresh(ctx context.Context) (string, error) {
 	return v, err
 }
 
-func (s *Store) ListScheduleKeys(ctx context.Context, channelID string) ([]string, error) {
-	pattern := fmt.Sprintf("%sschedule:%s:*", keyPrefix, channelID)
-	return s.client.Keys(ctx, pattern).Result()
+// BroadcastDate returns the broadcast day for a given time.
+// Greek TV broadcast day runs 06:00 → 06:00 next day.
+// A show at 02:00 on Tuesday belongs to Monday's broadcast day.
+func BroadcastDate(t time.Time, athens *time.Location) string {
+	local := t.In(athens)
+	if local.Hour() < 6 {
+		local = local.Add(-24 * time.Hour)
+	}
+	return local.Format("2006-01-02")
 }

@@ -25,8 +25,11 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RedisDB != 1 {
 		t.Errorf("RedisDB = %d, want 1", cfg.RedisDB)
 	}
-	if cfg.ScheduleTTL != 6*time.Hour {
-		t.Errorf("ScheduleTTL = %v, want 6h", cfg.ScheduleTTL)
+	if cfg.FutureScheduleTTL != 8*time.Hour {
+		t.Errorf("FutureScheduleTTL = %v, want 8h", cfg.FutureScheduleTTL)
+	}
+	if cfg.PastScheduleTTL != 192*time.Hour {
+		t.Errorf("PastScheduleTTL = %v, want 192h", cfg.PastScheduleTTL)
 	}
 	if cfg.AthensLocation == nil {
 		t.Error("AthensLocation is nil")
