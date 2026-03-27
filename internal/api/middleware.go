@@ -11,6 +11,20 @@ import (
 	"github.com/vpigadas/greek-tv-scraper/internal/metrics"
 )
 
+// Recovery catches panics in HTTP handlers, logs them, and returns a 500.
+func Recovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				metrics.PanicsTotal.WithLabelValues("http").Inc()
+				log.Printf("PANIC [%s %s]: %v", r.Method, r.URL.Path, err)
+				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

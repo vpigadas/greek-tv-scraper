@@ -108,6 +108,13 @@ var (
 		Help: "Number of channels with a currently-airing programme.",
 	})
 
+	// ── Resilience ──────────────────────────────────────────────────────────
+
+	PanicsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "greektv_panics_total",
+		Help: "Total recovered panics by component.",
+	}, []string{"component"})
+
 	// ── Service Info ────────────────────────────────────────────────────────
 
 	BuildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -149,6 +156,8 @@ func init() {
 		// Business
 		ChannelsTotal,
 		ChannelsLiveNow,
+		// Resilience
+		PanicsTotal,
 		// Service
 		BuildInfo,
 		StartTime,

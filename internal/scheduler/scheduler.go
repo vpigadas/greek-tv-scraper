@@ -27,14 +27,30 @@ func New(cfg *config.Config, s *store.Store) *Scheduler {
 	return &Scheduler{cfg: cfg, store: s, cron: cron.New()}
 }
 
-func (sc *Scheduler) Start() {
+func (sc *Scheduler) Start() error {
+	// Initial refresh with timeout and panic protection
 	go func() {
-		if err := sc.Refresh(context.Background()); err != nil {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC [scheduler initial refresh]: %v", r)
+				metrics.PanicsTotal.WithLabelValues("scheduler").Inc()
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := sc.Refresh(ctx); err != nil {
 			log.Printf("scheduler: initial refresh error: %v", err)
 		}
 	}()
 
+	// Cron-scheduled refresh with panic protection
 	_, err := sc.cron.AddFunc(sc.cfg.RefreshCron, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC [scheduler cron refresh]: %v", r)
+				metrics.PanicsTotal.WithLabelValues("scheduler").Inc()
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		if err := sc.Refresh(ctx); err != nil {
@@ -42,10 +58,11 @@ func (sc *Scheduler) Start() {
 		}
 	})
 	if err != nil {
-		log.Fatalf("scheduler: invalid cron expression %q: %v", sc.cfg.RefreshCron, err)
+		return fmt.Errorf("scheduler: invalid cron expression %q: %w", sc.cfg.RefreshCron, err)
 	}
 	sc.cron.Start()
 	log.Printf("scheduler: started (cron: %s)", sc.cfg.RefreshCron)
+	return nil
 }
 
 func (sc *Scheduler) Stop() {

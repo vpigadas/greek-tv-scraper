@@ -49,6 +49,14 @@ type xmltvProg struct {
 }
 
 // Fetch downloads and parses the XMLTV .gz feed.
+var httpClient = &http.Client{
+	Timeout: 60 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:    10,
+		IdleConnTimeout: 90 * time.Second,
+	},
+}
+
 // Returns a map of channelID -> []Programme for all channels in the feed.
 func Fetch(ctx context.Context, feedURL string, athens *time.Location) (map[string][]model.Programme, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
@@ -58,8 +66,7 @@ func Fetch(ctx context.Context, feedURL string, athens *time.Location) (map[stri
 	req.Header.Set("User-Agent", "greek-tv-scraper/1.0")
 	req.Header.Set("Accept-Encoding", "gzip")
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("xmltv: fetch %s: %w", feedURL, err)
 	}

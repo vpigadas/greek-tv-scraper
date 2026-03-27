@@ -29,25 +29,37 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	// Connect to Redis with retry (5 attempts, 2s backoff)
 	redisStore := store.New(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.FutureScheduleTTL, cfg.PastScheduleTTL)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := redisStore.Ping(ctx); err != nil {
-		log.Fatalf("redis: connection failed: %v", err)
+	for attempt := 1; attempt <= 5; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := redisStore.Ping(ctx)
+		cancel()
+		if err == nil {
+			log.Printf("redis: connected to %s db=%d", cfg.RedisAddr, cfg.RedisDB)
+			break
+		}
+		if attempt == 5 {
+			log.Fatalf("redis: connection failed after %d attempts: %v", attempt, err)
+		}
+		log.Printf("redis: connection attempt %d/5 failed: %v — retrying in 2s", attempt, err)
+		time.Sleep(2 * time.Second)
 	}
-	log.Printf("redis: connected to %s db=%d", cfg.RedisAddr, cfg.RedisDB)
 
-	// Start scheduler (cron refresh for 14-day window)
+	// Start scheduler
 	sched := scheduler.New(cfg, redisStore)
-	sched.Start()
+	if err := sched.Start(); err != nil {
+		log.Fatalf("scheduler: %v", err)
+	}
 	defer sched.Stop()
 
-	// Start now-updater (60s ticker for pre-computed /now cache)
+	// Start now-updater
 	nowUpdater := scheduler.NewNowUpdater(redisStore, cfg.AthensLocation)
 	nowUpdater.Start()
 	defer nowUpdater.Stop()
 
 	r := chi.NewRouter()
+	r.Use(api.Recovery) // panic recovery — must be first
 	r.Use(api.Metrics)
 	r.Use(api.Logger)
 	r.Use(api.CORS)
@@ -79,5 +91,7 @@ func main() {
 	log.Println("server: shutting down")
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutCancel()
-	_ = srv.Shutdown(shutCtx)
+	if err := srv.Shutdown(shutCtx); err != nil {
+		log.Printf("server: shutdown error: %v", err)
+	}
 }

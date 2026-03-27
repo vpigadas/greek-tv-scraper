@@ -36,8 +36,15 @@ func FetchAll(ctx context.Context, baseURL, date string, athens *time.Location) 
 	return result, nil
 }
 
+var httpClient = &http.Client{
+	Timeout: 20 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:    10,
+		IdleConnTimeout: 90 * time.Second,
+	},
+}
+
 func fetchChannel(ctx context.Context, url, epgID, date string, athens *time.Location) ([]model.Programme, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -45,7 +52,7 @@ func fetchChannel(ctx context.Context, url, epgID, date string, athens *time.Loc
 	req.Header.Set("User-Agent", "greek-tv-scraper/1.0")
 	req.Header.Set("Accept-Language", "el-GR,el;q=0.9")
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

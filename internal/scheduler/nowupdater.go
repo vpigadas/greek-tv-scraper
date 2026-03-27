@@ -32,8 +32,7 @@ func (u *NowUpdater) Stop() {
 }
 
 func (u *NowUpdater) run() {
-	// Run immediately on start
-	u.update()
+	u.safeUpdate()
 
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -41,11 +40,23 @@ func (u *NowUpdater) run() {
 	for {
 		select {
 		case <-ticker.C:
-			u.update()
+			u.safeUpdate()
 		case <-u.stop:
 			return
 		}
 	}
+}
+
+// safeUpdate wraps update() with panic recovery so a single panic
+// doesn't kill the goroutine.
+func (u *NowUpdater) safeUpdate() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC [now-updater]: %v", r)
+			metrics.PanicsTotal.WithLabelValues("now-updater").Inc()
+		}
+	}()
+	u.update()
 }
 
 func (u *NowUpdater) update() {

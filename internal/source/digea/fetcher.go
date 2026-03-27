@@ -34,6 +34,14 @@ var digeaToEPGID = map[string]string{
 }
 
 // FetchAllEvents fetches all events for a given date via the Digea API.
+var httpClient = &http.Client{
+	Timeout: 15 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:    10,
+		IdleConnTimeout: 90 * time.Second,
+	},
+}
+
 // Returns a map of EPG channel ID → []Programme.
 func FetchAllEvents(ctx context.Context, apiBase, date string, athens *time.Location) (map[string][]model.Programme, error) {
 	url := fmt.Sprintf("%s/get-events", apiBase)
@@ -47,8 +55,7 @@ func FetchAllEvents(ctx context.Context, apiBase, date string, athens *time.Loca
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Referer", "https://www.digea.gr/el/tileoptikoi-stathmoi/ilektronikos-odigos-programmatos")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("digea: fetch: %w", err)
 	}
