@@ -49,6 +49,12 @@ func (u *NowUpdater) run() {
 }
 
 func (u *NowUpdater) update() {
+	start := time.Now()
+	defer func() {
+		metrics.NowUpdaterDuration.Observe(time.Since(start).Seconds())
+		metrics.NowUpdaterRuns.Inc()
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

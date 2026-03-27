@@ -108,6 +108,8 @@ func (sc *Scheduler) Refresh(ctx context.Context) error {
 	// Step 3: For each channel × date, merge and store
 	channelsWithData := 0
 	totalProgrammes := 0
+	programmesPerDay := make(map[string]int)            // date → total progs
+	daysPerGroup := make(map[string]map[string]bool)    // group → set of dates with data
 
 	for _, ch := range registry.Channels {
 		channelHasData := false
@@ -142,6 +144,11 @@ func (sc *Scheduler) Refresh(ctx context.Context) error {
 			if len(progs) > 0 {
 				channelHasData = true
 				totalProgrammes += len(progs)
+				programmesPerDay[date] += len(progs)
+				if daysPerGroup[ch.Group] == nil {
+					daysPerGroup[ch.Group] = make(map[string]bool)
+				}
+				daysPerGroup[ch.Group][date] = true
 				if err := sc.store.SetSchedule(ctx, ch.ID, date, progs, isPast); err != nil {
 					log.Printf("scheduler: redis store error for %s %s: %v", ch.ID, date, err)
 				}
@@ -155,6 +162,14 @@ func (sc *Scheduler) Refresh(ctx context.Context) error {
 	metrics.ChannelsWithData.Set(float64(channelsWithData))
 	metrics.ProgrammesStored.Set(float64(totalProgrammes))
 	metrics.ChannelsTotal.Set(float64(len(registry.Channels)))
+
+	// Data coverage metrics
+	for group, dateSet := range daysPerGroup {
+		metrics.ScheduleDaysAvailable.WithLabelValues(group).Set(float64(len(dateSet)))
+	}
+	for date, count := range programmesPerDay {
+		metrics.ProgrammesPerDay.WithLabelValues(date).Set(float64(count))
+	}
 	metrics.RefreshDuration.WithLabelValues("total").Observe(time.Since(refreshStart).Seconds())
 	metrics.RefreshTotal.WithLabelValues("success").Inc()
 	metrics.RefreshLastSuccess.SetToCurrentTime()

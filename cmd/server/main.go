@@ -15,13 +15,14 @@ import (
 
 	"github.com/vpigadas/greek-tv-scraper/internal/api"
 	"github.com/vpigadas/greek-tv-scraper/internal/config"
-	_ "github.com/vpigadas/greek-tv-scraper/internal/metrics"
+	"github.com/vpigadas/greek-tv-scraper/internal/metrics"
 	"github.com/vpigadas/greek-tv-scraper/internal/scheduler"
 	"github.com/vpigadas/greek-tv-scraper/internal/store"
 )
 
 func main() {
 	_ = godotenv.Load()
+	metrics.StartTime.SetToCurrentTime()
 
 	cfg, err := config.Load()
 	if err != nil {

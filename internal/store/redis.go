@@ -45,7 +45,9 @@ func (s *Store) SetSchedule(ctx context.Context, channelID, date string, progs [
 	if isPast {
 		ttl = s.pastTTL
 	}
+	start := time.Now()
 	err = s.client.Set(ctx, key, data, ttl).Err()
+	metrics.RedisLatency.WithLabelValues("set").Observe(time.Since(start).Seconds())
 	if err != nil {
 		metrics.RedisOperations.WithLabelValues("set", "error").Inc()
 	} else {
@@ -57,7 +59,9 @@ func (s *Store) SetSchedule(ctx context.Context, channelID, date string, progs [
 // GetSchedule retrieves the programme list for a channel+broadcastDate.
 func (s *Store) GetSchedule(ctx context.Context, channelID, date string) ([]model.Programme, error) {
 	key := fmt.Sprintf("%sschedule:%s:%s", keyPrefix, channelID, date)
+	start := time.Now()
 	data, err := s.client.Get(ctx, key).Bytes()
+	metrics.RedisLatency.WithLabelValues("get").Observe(time.Since(start).Seconds())
 	if err == redis.Nil {
 		metrics.RedisOperations.WithLabelValues("get", "success").Inc()
 		return nil, nil
@@ -79,7 +83,9 @@ func (s *Store) GetScheduleRange(ctx context.Context, channelID string, dates []
 		key := fmt.Sprintf("%sschedule:%s:%s", keyPrefix, channelID, date)
 		cmds[date] = pipe.Get(ctx, key)
 	}
+	start := time.Now()
 	_, err := pipe.Exec(ctx)
+	metrics.RedisLatency.WithLabelValues("pipeline").Observe(time.Since(start).Seconds())
 	if err != nil && err != redis.Nil {
 		metrics.RedisOperations.WithLabelValues("pipeline", "error").Inc()
 		return nil, err
